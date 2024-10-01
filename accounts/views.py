@@ -38,97 +38,115 @@ from carts.models import Coupons,UserCoupons
 from django.http import JsonResponse
 from django.contrib.auth.decorators import user_passes_test
 from store.models import WishList
+from django.core.mail import send_mail
+from django.conf import settings
 
 
-
-
-
-
-
-
-
-#user registration
 @cache_control(no_cache=True, must_revalidate=True, no_store=True)
 @never_cache
 def register(request):
-  if 'key1' in request.session:
-      profile = request.session.get('profile')
-      products=Product.objects.all().filter(is_available=True)
-      context = {'profile': profile,'products':products}
-      return render(request,'home.html',{'products': products, 'profile': profile}) 
-  if request.method=='POST':
-    form=RegistrationForm(request.POST)
-    if form.is_valid():
-      first_name=form.cleaned_data['first_name']
-      last_name=form.cleaned_data['last_name']
-      phone_number=form.cleaned_data['phone_number']
-      email=form.cleaned_data['email']
-      password=form.cleaned_data['password']
-      user=Account.objects.create_user(first_name=first_name,last_name=last_name,email=email,password=password,phone_number=phone_number)
-      user.save()
-      
-      #user activation
-      otp = ''.join(secrets.choice('0123456789') for _ in range(4))
-      profile=Profile.objects.create(user=user,otp=f'{otp}')
-      profile.save()
-      user_details = {
-            'profile_email':profile.user.email,
-            'phone_number':profile.user.phone_number, 
-           }
-      request.session['user_details'] = user_details
-      request.session['key2']=2
-      messagehandler=MessageHandler(request.POST['phone_number'],otp).send_otp_via_message()
-      red = redirect('otpVerify')
-      red.set_cookie("can_otp_enter",True,max_age=60)
-      return red  
+    if 'key1' in request.session:
+        profile = request.session.get('profile')
+        products = Product.objects.all().filter(is_available=True)
+        context = {'profile': profile, 'products': products}
+        return render(request, 'home.html', context)
+    
+    if request.method == 'POST':
+        form = RegistrationForm(request.POST)
+        if form.is_valid():
+            first_name = form.cleaned_data['first_name']
+            last_name = form.cleaned_data['last_name']
+            phone_number = form.cleaned_data['phone_number']
+            email = form.cleaned_data['email']
+            password = form.cleaned_data['password']
+            user = Account.objects.create_user(first_name=first_name, last_name=last_name, email=email, password=password, phone_number=phone_number)
+            user.save()
+            
+            # User activation
+            otp = ''.join(secrets.choice('0123456789') for _ in range(4))
+            profile = Profile.objects.create(user=user, otp=otp)
+            profile.save()
+            
+            # Send OTP via email
+            subject = 'Your OTP for registration'
+            message = f'Your OTP is: {otp}'
+            from_email = settings.EMAIL_HOST_USER
+            recipient_list = [email]
+            send_mail(subject, message, from_email, recipient_list)
+            
+            user_details = {
+                'profile_email': profile.user.email,
+                'phone_number': profile.user.phone_number, 
+            }
+            request.session['user_details'] = user_details
+            request.session['key2'] = 2
+            
+            red = redirect('otpVerify')
+            red.set_cookie("can_otp_enter", True, max_age=60)
+            return red
 
-      messages.success(request,'Registration Sucessful')
-      return redirect('register')
-
-  else:
-    form=RegistrationForm
-  context={
-    'form':form
-    }
-  return render(request,'accounts/register.html',context)
-
+        messages.success(request, 'Registration Successful')
+        return redirect('register')
+    else:
+        form = RegistrationForm()
+    
+    context = {'form': form}
+    return render(request, 'accounts/register.html', context)
 
 #user login
 @cache_control(no_cache=True, must_revalidate=True, no_store=True)
 @never_cache
 def login(request):
-  if 'key1' in request.session:
-      
-      profile = request.session.get('profile')
-      products=Product.objects.all().filter(is_available=True)
-      context = {'profile': profile,'products':products}
-      return render(request,'home.html',{'products': products, 'profile': profile}) 
-  if request.method == 'POST':
+    if 'key1' in request.session:
+        profile = request.session.get('profile')
+        products = Product.objects.all().filter(is_available=True)
+        context = {'profile': profile, 'products': products}
+        return render(request, 'home.html', context)
+    
+    if request.method == 'POST':
         email = request.POST.get('email')
-        phone_number = request.POST.get('phone_number')
-        # Check if a profile with the given phone number exists
-        user=Account.objects.filter(email=email).first()
+        
+        # Check if a user with the given email exists
+        user = Account.objects.filter(email=email).first()
         if not user:
             messages.error(request, "User does not exist.")
             return redirect('login')
+        
         if not user.is_active:
             messages.error(request, "Your account has been temporarily blocked. Please contact support for further assistance.")
             return redirect('login')
-        profile=Profile.objects.get(user=user)
+        
+        profile = Profile.objects.get(user=user)
         otp = ''.join(secrets.choice('0123456789') for _ in range(4))
-        profile.otp=otp
-        profile.save() 
+        profile.otp = otp
+        profile.save()
+        
         user_details = {
-            'profile_email':profile.user.email,
-            'phone_number':profile.user.phone_number, 
-           }
+            'profile_email': profile.user.email,
+            'phone_number': profile.user.phone_number,
+        }
         request.session['user_details'] = user_details
-        request.session['key5']=5
-        messagehandler = MessageHandler(profile.user.phone_number, otp).send_otp_via_message()
+        request.session['key5'] = 5
+        
+        # Send OTP via email
+        subject = 'Your Login OTP'
+        message = f'Your OTP for login is: {otp}'
+        from_email = settings.EMAIL_HOST_USER
+        recipient_list = [email]
+        
+        try:
+            send_mail(subject, message, from_email, recipient_list)
+            messages.success(request, 'OTP has been sent to your email')
+        except Exception as e:
+            messages.error(request, 'Failed to send OTP. Please try again.')
+            print(f"Error sending email: {e}")
+            return redirect('login')
+        
         red = redirect('otpVerify_login')
-        red.set_cookie("can_otp_enter",True,max_age=60)
-        return red       
-  return render(request, 'accounts/login.html')
+        red.set_cookie("can_otp_enter", True, max_age=60)
+        return red
+    
+    return render(request, 'accounts/login.html')
 
 #login_otp_verify
 @cache_control(no_cache=True, must_revalidate=True, no_store=True)
@@ -209,24 +227,38 @@ def otpVerify_login(request):
 @cache_control(no_cache=True, must_revalidate=True, no_store=True)
 @never_cache
 def resend_otp_login(request):
- if 'resend_otp' in request.POST:
-    user_details = request.session.get('user_details')
-    if user_details:
-        # Access user details from the session
-             otp = ''.join(secrets.choice('0123456789') for _ in range(4))
-             profile_email = user_details['profile_email']
-             user=Account.objects.get(email=profile_email)
-             profile=Profile.objects.get(user=user)
-             profile.otp=otp
-             profile.save()
-             messagehandler=MessageHandler(profile.user.phone_number,otp).send_otp_via_message()
-             red=redirect('otpVerify_login')
-             red.set_cookie("can_otp_enter",True,max_age=60)
-             messages.success(request, 'OTP has been resent')
-             return red 
-    return render(request, 'login.html')
- return render(request, 'accounts/login.html')  
-
+    if 'resend_otp' in request.POST:
+        user_details = request.session.get('user_details')
+        if user_details:
+            # Generate new OTP
+            otp = ''.join(secrets.choice('0123456789') for _ in range(4))
+            profile_email = user_details['profile_email']
+            
+            # Update user's profile with new OTP
+            user = Account.objects.get(email=profile_email)
+            profile = Profile.objects.get(user=user)
+            profile.otp = otp
+            profile.save()
+            
+            # Send OTP via email
+            subject = 'Your New Login OTP'
+            message = f'Your new OTP for login is: {otp}'
+            from_email = settings.EMAIL_HOST_USER
+            recipient_list = [profile_email]
+            
+            try:
+                send_mail(subject, message, from_email, recipient_list)
+                messages.success(request, 'New OTP has been sent to your email')
+            except Exception as e:
+                messages.error(request, 'Failed to send OTP. Please try again.')
+                print(f"Error sending email: {e}")
+                return redirect('login')
+            
+            red = redirect('otpVerify_login')
+            red.set_cookie("can_otp_enter", True, max_age=60)
+            return red
+        
+    return render(request, 'accounts/login.html')
 
 def home1(request):
     if request.COOKIES.get('verified') and request.COOKIES.get('verified')!=None:
@@ -267,26 +299,38 @@ def otpVerify(request,):
 @cache_control(no_cache=True, must_revalidate=True, no_store=True)
 @never_cache
 def resend_otp(request):
-  if 'resend_otp' in request.POST:
-    user_details = request.session.get('user_details')
-    if user_details:
-            # Access user details from the session
-             
-             phone_number = user_details['phone_number']
-          
-             otp = ''.join(secrets.choice('0123456789') for _ in range(4))
-             profile_email = user_details['profile_email']
-             user=Account.objects.get(email=profile_email)
-             profile=Profile.objects.get(user=user)
-             profile.otp=otp
-             profile.save()
-             messagehandler=MessageHandler(profile.user.phone_number,otp).send_otp_via_message()
-             red=redirect('otpVerify')
-             red.set_cookie("can_otp_enter",True,max_age=60)
-             messages.success(request, 'OTP has been resent')
-             return red 
-    return render(request, 'register.html')
-  return render(request, 'accounts/register.html')  
+    if 'resend_otp' in request.POST:
+        user_details = request.session.get('user_details')
+        if user_details:
+            profile_email = user_details['profile_email']
+            
+            # Generate new OTP
+            otp = ''.join(secrets.choice('0123456789') for _ in range(4))
+            
+            # Update user's profile with new OTP
+            user = Account.objects.get(email=profile_email)
+            profile = Profile.objects.get(user=user)
+            profile.otp = otp
+            profile.save()
+            
+            # Send OTP via email
+            subject = 'Your New OTP for Registration'
+            message = f'Your new OTP is: {otp}'
+            from_email = settings.EMAIL_HOST_USER
+            recipient_list = [profile_email]
+            
+            try:
+                send_mail(subject, message, from_email, recipient_list)
+                messages.success(request, 'New OTP has been sent to your email')
+            except Exception as e:
+                messages.error(request, 'Failed to send OTP. Please try again.')
+                print(f"Error sending email: {e}")
+            
+            red = redirect('otpVerify')
+            red.set_cookie("can_otp_enter", True, max_age=60)
+            return red
+        
+    return render(request, 'accounts/register.html')
 def is_admin(user):
     return user.is_authenticated and user.is_staff
 #logout user
